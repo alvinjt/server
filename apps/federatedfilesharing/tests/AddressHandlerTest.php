@@ -41,7 +41,7 @@ class AddressHandlerTest extends \Test\TestCase {
 			$this->createMock(IUserManager::class),
 		);
 
-		$this->addressHandler = new AddressHandler($this->urlGenerator, $this->il10n, $this->cloudIdManager);
+		$this->addressHandler = new AddressHandler($this->urlGenerator, $this->il10n, $this->cloudIdManager, $this->createMock(IUserManager::class));
 	}
 
 	public static function dataTestSplitUserRemote(): array {
