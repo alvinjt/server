@@ -27,6 +27,7 @@ use OCP\Authentication\Exceptions\ExpiredTokenException;
 use OCP\Authentication\Exceptions\InvalidTokenException;
 use OCP\EventDispatcher\GenericEvent;
 use OCP\EventDispatcher\IEventDispatcher;
+use OCP\Files\IRootFolder;
 use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\IRequest;
@@ -46,6 +47,7 @@ use OCP\User\Events\UserFirstTimeLoggedInEvent;
 use OCP\User\Events\UserLoggedInWithCookieEvent;
 use OCP\User\Events\UserLoggedOutEvent;
 use OCP\Util;
+use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -65,8 +67,7 @@ use Psr\Log\LoggerInterface;
 class Session implements IUserSession, Emitter {
 	use TTransactional;
 
-	/** @var User $activeUser */
-	protected $activeUser;
+	protected ?User $activeUser = null;
 
 	public function __construct(
 		private Manager $manager,
@@ -78,6 +79,8 @@ class Session implements IUserSession, Emitter {
 		private ILockdownManager $lockdownManager,
 		private LoggerInterface $logger,
 		private IEventDispatcher $dispatcher,
+		private ContainerInterface $container,
+		private IRootFolder $rootFolder,
 	) {
 	}
 
@@ -524,8 +527,8 @@ class Session implements IUserSession, Emitter {
 
 		if ($firstTimeLogin) {
 			// trigger any other initialization
-			Server::get(IEventDispatcher::class)->dispatch(IUser::class . '::firstLogin', new GenericEvent($this->getUser()));
-			Server::get(IEventDispatcher::class)->dispatchTyped(new UserFirstTimeLoggedInEvent($this->getUser()));
+			$this->dispatcher->dispatch(IUser::class . '::firstLogin', new GenericEvent($user));
+			$this->dispatcher->dispatchTyped(new UserFirstTimeLoggedInEvent($user));
 		}
 	}
 

@@ -8,6 +8,7 @@
 namespace OC;
 
 use bantu\IniGetWrapper\IniGetWrapper;
+use lib\private\Files\Listeners\UserMountCacheListener;
 use OC\Accounts\AccountManager;
 use OC\Activity\EventMerger;
 use OC\App\AppManager;
@@ -529,6 +530,8 @@ class Server extends ServerContainer implements IServerContainer {
 				$c->get('LockdownManager'),
 				$c->get(LoggerInterface::class),
 				$c->get(IEventDispatcher::class),
+				$c,
+				$c->get(IRootFolder::class),
 			);
 			$dispatcher = $this->get(IEventDispatcher::class);
 			$dispatcher->addListener(UserLoggedInEvent::class, function (UserLoggedInEvent $event) {
@@ -749,11 +752,11 @@ class Server extends ServerContainer implements IServerContainer {
 
 			return new DateTimeFormatter(
 				$c->get(IDateTimeZone::class)->getTimeZone(),
-				$c->getL10N('lib', $language)
+				$c->get(IFactory::class)->get('lib', $language)
 			);
 		});
 
-		$this->registerService(IUserMountCache::class, function (ContainerInterface $c) {
+		$this->registerService(IUserMountCache::class, function (ContainerInterface $c): IUserMountCache {
 			$mountCache = $c->get(UserMountCache::class);
 			/** @var IEventDispatcher $eventDispatcher */
 			$eventDispatcher = $c->get(IEventDispatcher::class);
