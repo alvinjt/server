@@ -46,7 +46,7 @@ class Coordinator {
 	}
 
 	public function runInitialRegistration(): void {
-		$apps = OC_App::getEnabledApps();
+		$apps = $this->appManager->getEnabledApps();
 		if (!empty($apps)) {
 			// make sure to also register the core app
 			$apps = ['core', ...$apps];
