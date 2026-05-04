@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace OC\OCM;
 
 use OC\Security\IdentityProof\Manager;
+use OC\Security\Jwks\Jwk;
 use OCP\IAppConfig;
 use OCP\IURLGenerator;
 use OCP\OCM\Exceptions\OCMProviderException;
@@ -38,6 +39,10 @@ class OCMSignatoryManager implements ISignatoryManager {
 	public const APPCONFIG_SIGN_IDENTITY_EXTERNAL = 'ocm_signed_request_identity_external';
 	public const APPCONFIG_SIGN_DISABLED = 'ocm_signed_request_disabled';
 	public const APPCONFIG_SIGN_ENFORCED = 'ocm_signed_request_enforced';
+	private const APPKEY_CAVAGE = 'ocm_external';
+	private const APPKEY_ED25519 = 'ocm_ed25519';
+	private const KEYID_FRAGMENT_CAVAGE = 'signature';
+	private const KEYID_FRAGMENT_ED25519 = 'ed25519';
 
 	public function __construct(
 		private readonly IAppConfig $appConfig,
@@ -91,21 +96,16 @@ class OCMSignatoryManager implements ISignatoryManager {
 		 * TODO: manage multiple identity (external, internal, ...) to allow a limitation
 		 * based on the requested interface (ie. only accept shares from globalscale)
 		 */
-		if ($this->appConfig->hasKey('core', self::APPCONFIG_SIGN_IDENTITY_EXTERNAL, true)) {
-			$identity = $this->appConfig->getValueString('core', self::APPCONFIG_SIGN_IDENTITY_EXTERNAL, lazy: true);
-			$keyId = 'https://' . $identity . '/ocm#signature';
-		} else {
-			$keyId = $this->generateKeyId();
-		}
+		$keyId = $this->buildLocalKeyId(self::KEYID_FRAGMENT_CAVAGE);
 
-		if (!$this->identityProofManager->hasAppKey('core', 'ocm_external')) {
-			$this->identityProofManager->generateAppKey('core', 'ocm_external', [
+		if (!$this->identityProofManager->hasAppKey('core', self::APPKEY_CAVAGE)) {
+			$this->identityProofManager->generateAppKey('core', self::APPKEY_CAVAGE, [
 				'algorithm' => 'rsa',
 				'private_key_bits' => 2048,
 				'private_key_type' => OPENSSL_KEYTYPE_RSA,
 			]);
 		}
-		$keyPair = $this->identityProofManager->getAppKey('core', 'ocm_external');
+		$keyPair = $this->identityProofManager->getAppKey('core', self::APPKEY_CAVAGE);
 
 		$signatory = new Signatory(true);
 		$signatory->setKeyId($keyId);
@@ -116,27 +116,72 @@ class OCMSignatoryManager implements ISignatoryManager {
 	}
 
 	/**
-	 * - tries to generate a keyId using global configuration (from signature manager) if available
-	 * - generate a keyId using the current route to ocm shares
+	 * Local Ed25519 signing key, used for RFC 9421 HTTP Message Signatures.
+	 * The keypair is generated lazily on first call.
 	 *
-	 * @return string
-	 * @throws IdentityNotFoundException
+	 * @return Signatory|null null if no identity can be derived for this instance
 	 */
-	private function generateKeyId(): string {
+	public function getLocalEd25519Signatory(): ?Signatory {
 		try {
-			return $this->signatureManager->generateKeyIdFromConfig('/ocm#signature');
+			$keyId = $this->buildLocalKeyId(self::KEYID_FRAGMENT_ED25519);
+		} catch (IdentityNotFoundException) {
+			return null;
+		}
+
+		if (!$this->identityProofManager->hasAppKey('core', self::APPKEY_ED25519)) {
+			$this->identityProofManager->generateAppKey('core', self::APPKEY_ED25519, [
+				'private_key_type' => OPENSSL_KEYTYPE_ED25519,
+			]);
+		}
+		$keyPair = $this->identityProofManager->getAppKey('core', self::APPKEY_ED25519);
+
+		$signatory = new Signatory(true);
+		$signatory->setKeyId($keyId);
+		$signatory->setPublicKey($keyPair->getPublic());
+		$signatory->setPrivateKey($keyPair->getPrivate());
+		return $signatory;
+	}
+
+	/**
+	 * JWK form of the local Ed25519 public key, suitable for inclusion in the
+	 * `/.well-known/jwks.json` document.
+	 *
+	 * @return Jwk|null null if no Ed25519 signatory can be built (e.g. missing identity)
+	 */
+	public function getLocalEd25519Jwk(): ?Jwk {
+		$signatory = $this->getLocalEd25519Signatory();
+		if ($signatory === null) {
+			return null;
+		}
+		return Jwk::fromEd25519PublicKeyPem($signatory->getPublicKey(), $signatory->getKeyId());
+	}
+
+	/**
+	 * Resolve the keyId for one of this instance's local signing keys.
+	 *
+	 * @param string $fragment URL fragment that distinguishes the key (e.g. 'signature', 'ed25519')
+	 * @throws IdentityNotFoundException when no instance identity can be derived
+	 */
+	private function buildLocalKeyId(string $fragment): string {
+		if ($this->appConfig->hasKey('core', self::APPCONFIG_SIGN_IDENTITY_EXTERNAL, true)) {
+			$identity = $this->appConfig->getValueString('core', self::APPCONFIG_SIGN_IDENTITY_EXTERNAL, lazy: true);
+			return 'https://' . $identity . '/ocm#' . $fragment;
+		}
+
+		try {
+			return $this->signatureManager->generateKeyIdFromConfig('/ocm#' . $fragment);
 		} catch (IdentityNotFoundException) {
 		}
 
 		$url = $this->urlGenerator->linkToRouteAbsolute('cloud_federation_api.requesthandlercontroller.addShare');
 		$identity = $this->signatureManager->extractIdentityFromUri($url);
 
-		// catching possible subfolder to create a keyId like 'https://hostname/subfolder/ocm#signature
+		// catching possible subfolder to create a keyId like 'https://hostname/subfolder/ocm#<fragment>'
 		$path = parse_url($url, PHP_URL_PATH);
 		$pos = strpos($path, '/ocm/shares');
 		$sub = ($pos) ? substr($path, 0, $pos) : '';
 
-		return 'https://' . $identity . $sub . '/ocm#signature';
+		return 'https://' . $identity . $sub . '/ocm#' . $fragment;
 	}
 
 	/**
