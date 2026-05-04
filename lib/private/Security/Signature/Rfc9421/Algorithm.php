@@ -61,16 +61,13 @@ final class Algorithm {
 			return sodium_crypto_sign_detached($signatureBase, $privateKey);
 		}
 
-		[$opensslAlgo, $padding, $encoding] = self::opensslParametersForAlgorithm($normalized);
+		[$opensslAlgo, $encoding] = self::opensslParametersForAlgorithm($normalized);
 
-		// Padding is only valid for RSA keys; passing it for ECDSA triggers a
-		// PHP warning and rejection.
-		if ($padding === null) {
-			$ok = openssl_sign($signatureBase, $signature, $privateKey, $opensslAlgo);
-		} else {
-			/** @psalm-suppress TooManyArguments - the 5-arg form is supported on PHP 8 */
-			$ok = openssl_sign($signatureBase, $signature, $privateKey, $opensslAlgo, $padding);
-		}
+		// We do not pass an explicit padding mode: openssl_sign's 5th argument
+		// only became available in PHP 8.5, and the algorithms we still
+		// support (RSA-PKCS1-v1_5, ECDSA) all use the function's default
+		// padding behaviour (PKCS1 v1.5 for RSA, ignored for ECDSA).
+		$ok = openssl_sign($signatureBase, $signature, $privateKey, $opensslAlgo);
 		if (!$ok) {
 			throw new SignatureException('openssl_sign failed for ' . $normalized);
 		}
@@ -111,7 +108,7 @@ final class Algorithm {
 			return sodium_crypto_sign_verify_detached($signature, $signatureBase, $rawPublicKey);
 		}
 
-		[$opensslAlgo, $padding, $encoding] = self::opensslParametersForAlgorithm($resolved);
+		[$opensslAlgo, $encoding] = self::opensslParametersForAlgorithm($resolved);
 
 		if ($encoding === 'ecdsa') {
 			$signature = self::ecdsaRawToDer($signature, self::ecdsaCoordinateSize($resolved));
@@ -125,11 +122,10 @@ final class Algorithm {
 			throw new SignatureException('cannot derive public key from JWK');
 		}
 
-		if ($padding === null) {
-			return openssl_verify($signatureBase, $signature, $publicKey, $opensslAlgo) === 1;
-		}
-		/** @psalm-suppress TooManyArguments - the 5-arg form is supported on PHP 8 */
-		return openssl_verify($signatureBase, $signature, $publicKey, $opensslAlgo, $padding) === 1;
+		// See comment in sign(): padding is the openssl_verify default for
+		// the algorithms we still support, and the 5-arg form requires
+		// PHP 8.5.
+		return openssl_verify($signatureBase, $signature, $publicKey, $opensslAlgo) === 1;
 	}
 
 	/**
@@ -176,18 +172,18 @@ final class Algorithm {
 	}
 
 	/**
-	 * @return array{0: int, 1: int|null, 2: string} [openssl algo, padding (null = omit for non-RSA), wire encoding]
+	 * @return array{0: int, 1: string} [openssl digest, wire encoding]
 	 */
 	private static function opensslParametersForAlgorithm(string $native): array {
 		// Ed25519 is handled by libsodium upstream of this method and never
 		// reaches it; only RSA-PKCS1-v1_5 and ECDSA go through OpenSSL.
 		// RSA-PSS is not supported (see class docblock).
 		return match ($native) {
-			'rsa-v1_5-sha256' => [OPENSSL_ALGO_SHA256, OPENSSL_PKCS1_PADDING, 'raw'],
-			'rsa-v1_5-sha384' => [OPENSSL_ALGO_SHA384, OPENSSL_PKCS1_PADDING, 'raw'],
-			'rsa-v1_5-sha512' => [OPENSSL_ALGO_SHA512, OPENSSL_PKCS1_PADDING, 'raw'],
-			'ecdsa-p256-sha256' => [OPENSSL_ALGO_SHA256, null, 'ecdsa'],
-			'ecdsa-p384-sha384' => [OPENSSL_ALGO_SHA384, null, 'ecdsa'],
+			'rsa-v1_5-sha256' => [OPENSSL_ALGO_SHA256, 'raw'],
+			'rsa-v1_5-sha384' => [OPENSSL_ALGO_SHA384, 'raw'],
+			'rsa-v1_5-sha512' => [OPENSSL_ALGO_SHA512, 'raw'],
+			'ecdsa-p256-sha256' => [OPENSSL_ALGO_SHA256, 'ecdsa'],
+			'ecdsa-p384-sha384' => [OPENSSL_ALGO_SHA384, 'ecdsa'],
 			default => throw new SignatureException('unsupported signature algorithm: ' . $native),
 		};
 	}

@@ -184,7 +184,9 @@ class Rfc9421RoundTripTest extends TestCase {
 
 	private function makeSignatoryManager(Signatory $signatory): ISignatoryManager {
 		return new class($signatory) implements ISignatoryManager {
-			public function __construct(private Signatory $sig) {
+			public function __construct(
+				private Signatory $sig,
+			) {
 			}
 
 			public function getProviderId(): string {

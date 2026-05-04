@@ -58,7 +58,7 @@ class SignatureBaseTest extends TestCase {
 		$base = SignatureBase::build(
 			'GET',
 			'https://example.org/',
-			['date' => "  Mon, 04 May 2026 12:00:00 GMT  "],
+			['date' => '  Mon, 04 May 2026 12:00:00 GMT  '],
 			['date'],
 			'()'
 		);

@@ -344,6 +344,12 @@ final class OCMDiscoveryService implements IOCMDiscoveryService {
 	/**
 	 * add entries to the payload to auth the whole request
 	 *
+	 * Picks the signature scheme from the remote's advertised OCM
+	 * capabilities; see the OCM specification for the selection rules. The
+	 * existing strict/permissive policy (`APPCONFIG_SIGN_ENFORCED` /
+	 * `APPCONFIG_SIGN_DISABLED`) is preserved as the fallback when the remote
+	 * advertises neither `http-sig` nor a `publicKey`.
+	 *
 	 * @throws OCMProviderException
 	 * @return array
 	 */
@@ -353,20 +359,31 @@ final class OCMDiscoveryService implements IOCMDiscoveryService {
 			return $payload;
 		}
 
-		if ($this->appConfig->getValueBool('core', OCMSignatoryManager::APPCONFIG_SIGN_ENFORCED, lazy: true)
-			&& $this->signatoryManager->getRemoteSignatory($this->signatureManager->extractIdentityFromUri($uri)) === null) {
+		$origin = $this->signatureManager->extractIdentityFromUri($uri);
+		$ocmProvider = $this->discover($origin);
+
+		$useRfc9421 = $ocmProvider->hasCapability('http-sig');
+		$hasPublicKey = $this->signatoryManager->getRemoteSignatory($origin) !== null;
+
+		if (!$useRfc9421 && !$hasPublicKey
+			&& $this->appConfig->getValueBool('core', OCMSignatoryManager::APPCONFIG_SIGN_ENFORCED, lazy: true)) {
 			throw new OCMProviderException('remote endpoint does not support signed request');
 		}
 
-		if (!$this->appConfig->getValueBool('core', OCMSignatoryManager::APPCONFIG_SIGN_DISABLED, lazy: true)) {
-			$signedPayload = $this->signatureManager->signOutgoingRequestIClientPayload(
-				$this->signatoryManager,
-				$payload,
-				$method, $uri
-			);
+		if ($this->appConfig->getValueBool('core', OCMSignatoryManager::APPCONFIG_SIGN_DISABLED, lazy: true)) {
+			return $payload;
 		}
 
-		return $signedPayload ?? $payload;
+		$signatoryManager = $useRfc9421
+			? new Rfc9421SignatoryManager($this->signatoryManager)
+			: $this->signatoryManager;
+
+		return $this->signatureManager->signOutgoingRequestIClientPayload(
+			$signatoryManager,
+			$payload,
+			$method,
+			$uri,
+		);
 	}
 
 	private function generateRequestOptions(array $options): array {

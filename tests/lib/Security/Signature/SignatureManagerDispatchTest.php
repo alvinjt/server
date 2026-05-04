@@ -52,7 +52,10 @@ class SignatureManagerDispatchTest extends TestCase {
 	}
 
 	public function testOutgoingDispatchesToCavageByDefault(): void {
-		[$signatoryManager,] = $this->ed25519SignatoryManager(rfc9421Format: false);
+		// Cavage signs with an RSA PEM, so we need a real RSA keypair here;
+		// the Ed25519 helper would produce libsodium bytes that openssl_sign
+		// can't consume.
+		$signatoryManager = $this->rsaSignatoryManager();
 
 		$signed = $this->signatureManager->getOutgoingSignedRequest(
 			$signatoryManager,
@@ -121,6 +124,44 @@ class SignatureManagerDispatchTest extends TestCase {
 		// $signatoryManager does NOT implement IJwkResolvingSignatoryManager.
 		$this->expectException(IncomingRequestException::class);
 		$this->signatureManager->getIncomingSignedRequest($signatoryManager, $body);
+	}
+
+	private function rsaSignatoryManager(): ISignatoryManager {
+		$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+		$priv = '';
+		openssl_pkey_export($key, $priv);
+		$pub = openssl_pkey_get_details($key)['key'];
+
+		$signatory = new Signatory(true);
+		$signatory->setKeyId('https://sender.example.org/ocm#signature');
+		$signatory->setPublicKey($pub);
+		$signatory->setPrivateKey($priv);
+
+		return new class($signatory) implements ISignatoryManager {
+			public function __construct(
+				private Signatory $signatory,
+			) {
+			}
+
+			public function getProviderId(): string {
+				return 'test';
+			}
+
+			public function getOptions(): array {
+				return [
+					'algorithm' => SignatureAlgorithm::RSA_SHA256,
+					'digestAlgorithm' => DigestAlgorithm::SHA256,
+				];
+			}
+
+			public function getLocalSignatory(): Signatory {
+				return $this->signatory;
+			}
+
+			public function getRemoteSignatory(string $remote): ?Signatory {
+				return null;
+			}
+		};
 	}
 
 	/**

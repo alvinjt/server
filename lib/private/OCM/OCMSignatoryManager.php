@@ -9,22 +9,26 @@ declare(strict_types=1);
 
 namespace OC\OCM;
 
+use JsonException;
 use OC\Security\IdentityProof\Manager;
 use OC\Security\Jwks\Jwk;
+use OC\Security\Signature\Rfc9421\IJwkResolvingSignatoryManager;
+use OCP\Http\Client\IClientService;
 use OCP\IAppConfig;
+use OCP\IConfig;
 use OCP\IURLGenerator;
 use OCP\OCM\Exceptions\OCMProviderException;
 use OCP\Security\Signature\Enum\DigestAlgorithm;
 use OCP\Security\Signature\Enum\SignatoryType;
 use OCP\Security\Signature\Enum\SignatureAlgorithm;
 use OCP\Security\Signature\Exceptions\IdentityNotFoundException;
-use OCP\Security\Signature\ISignatoryManager;
 use OCP\Security\Signature\ISignatureManager;
 use OCP\Security\Signature\Model\Signatory;
 use OCP\Server;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
 use Psr\Log\LoggerInterface;
+use Throwable;
 
 /**
  * @inheritDoc
@@ -34,7 +38,7 @@ use Psr\Log\LoggerInterface;
  *
  * @since 31.0.0
  */
-class OCMSignatoryManager implements ISignatoryManager {
+class OCMSignatoryManager implements IJwkResolvingSignatoryManager {
 	public const PROVIDER_ID = 'ocm';
 	public const APPCONFIG_SIGN_IDENTITY_EXTERNAL = 'ocm_signed_request_identity_external';
 	public const APPCONFIG_SIGN_DISABLED = 'ocm_signed_request_disabled';
@@ -49,6 +53,8 @@ class OCMSignatoryManager implements ISignatoryManager {
 		private readonly ISignatureManager $signatureManager,
 		private readonly IURLGenerator $urlGenerator,
 		private readonly Manager $identityProofManager,
+		private readonly IClientService $clientService,
+		private readonly IConfig $config,
 		private readonly LoggerInterface $logger,
 	) {
 	}
@@ -205,5 +211,50 @@ class OCMSignatoryManager implements ISignatoryManager {
 			$this->logger->warning('fail to get remote signatory', ['exception' => $e, 'remote' => $remote]);
 			return null;
 		}
+	}
+
+	/**
+	 * Fetch the remote's `/.well-known/jwks.json` (per the OCM specification)
+	 * and return the JWK whose `kid` matches $keyId. Returns null when the
+	 * fetch fails or no key with that kid is published.
+	 */
+	#[\Override]
+	public function getRemoteJwk(string $origin, string $keyId): ?Jwk {
+		$url = 'https://' . $origin . '/.well-known/jwks.json';
+		$options = [
+			'timeout' => 10,
+			'connect_timeout' => 10,
+		];
+		if ($this->config->getSystemValueBool('sharing.federation.allowSelfSignedCertificates') === true) {
+			$options['verify'] = false;
+		}
+
+		try {
+			$response = $this->clientService->newClient()->get($url, $options);
+		} catch (Throwable $e) {
+			$this->logger->warning('failed to fetch remote JWKS', ['exception' => $e, 'url' => $url]);
+			return null;
+		}
+
+		try {
+			$decoded = json_decode((string)$response->getBody(), true, 8, JSON_THROW_ON_ERROR);
+		} catch (JsonException $e) {
+			$this->logger->warning('remote JWKS is not valid JSON', ['exception' => $e, 'url' => $url]);
+			return null;
+		}
+
+		if (!is_array($decoded) || !is_array($decoded['keys'] ?? null)) {
+			return null;
+		}
+
+		foreach ($decoded['keys'] as $entry) {
+			if (!is_array($entry)) {
+				continue;
+			}
+			if (($entry['kid'] ?? null) === $keyId) {
+				return Jwk::fromArray($entry);
+			}
+		}
+		return null;
 	}
 }
