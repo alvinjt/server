@@ -178,6 +178,33 @@ class Manager {
 		return $this->generateKey($this->generateAppKeyId($app, $name), $options);
 	}
 
+	/**
+	 * Generate an Ed25519 keypair via libsodium and persist it under the given
+	 * app/name. The Key returned holds the raw 32-byte public key and the raw
+	 * 64-byte secret key (libsodium format: seed||publickey) — there is no
+	 * PEM wrapping. ext-sodium is a hard requirement of the server.
+	 *
+	 * Note: if a key already exists at this path it will be overwritten.
+	 */
+	public function generateEd25519AppKey(string $app, string $name): Key {
+		$keyPair = sodium_crypto_sign_keypair();
+		$publicKey = sodium_crypto_sign_publickey($keyPair);
+		$privateKey = sodium_crypto_sign_secretkey($keyPair);
+
+		$id = $this->generateAppKeyId($app, $name);
+		try {
+			$this->appData->newFolder($id);
+		} catch (\Exception) {
+		}
+		$folder = $this->appData->getFolder($id);
+		$folder->newFile('private')
+			->putContent($this->crypto->encrypt($privateKey));
+		$folder->newFile('public')
+			->putContent($publicKey);
+
+		return new Key($publicKey, $privateKey);
+	}
+
 	public function deleteAppKey(string $app, string $name): bool {
 		try {
 			$folder = $this->appData->getFolder($this->generateAppKeyId($app, $name));

@@ -17,7 +17,8 @@ use Test\TestCase;
 class AlgorithmTest extends TestCase {
 	public function testNormalizeNativeIsPassThrough(): void {
 		$this->assertSame('ed25519', Algorithm::normalize('ed25519'));
-		$this->assertSame('rsa-pss-sha512', Algorithm::normalize('rsa-pss-sha512'));
+		$this->assertSame('rsa-v1_5-sha256', Algorithm::normalize('rsa-v1_5-sha256'));
+		$this->assertSame('ecdsa-p256-sha256', Algorithm::normalize('ecdsa-p256-sha256'));
 	}
 
 	public function testNormalizeJoseAliases(): void {
@@ -25,12 +26,23 @@ class AlgorithmTest extends TestCase {
 		$this->assertSame('ecdsa-p256-sha256', Algorithm::normalize('ES256'));
 		$this->assertSame('ecdsa-p384-sha384', Algorithm::normalize('ES384'));
 		$this->assertSame('rsa-v1_5-sha256', Algorithm::normalize('RS256'));
-		$this->assertSame('rsa-pss-sha512', Algorithm::normalize('PS512'));
 	}
 
 	public function testNormalizeRejectsUnknown(): void {
 		$this->expectException(SignatureException::class);
 		Algorithm::normalize('totally-not-real');
+	}
+
+	public function testNormalizeRejectsRsaPss(): void {
+		// RSA-PSS support is intentionally not implemented; see Algorithm
+		// docblock. The verifier must reject PSS algorithm identifiers.
+		$this->expectException(SignatureException::class);
+		Algorithm::normalize('rsa-pss-sha512');
+	}
+
+	public function testNormalizeRejectsJosePsAlias(): void {
+		$this->expectException(SignatureException::class);
+		Algorithm::normalize('PS512');
 	}
 
 	public function testEd25519RoundTrip(): void {
@@ -53,13 +65,6 @@ class AlgorithmTest extends TestCase {
 		$this->assertSame(256, strlen($sig));
 		$this->assertTrue(Algorithm::verify('payload', $sig, $jwk, 'rsa-v1_5-sha256'));
 		$this->assertTrue(Algorithm::verify('payload', $sig, $jwk, 'RS256'));
-	}
-
-	public function testRsaPssRoundTrip(): void {
-		[$priv, $jwk] = $this->rsaKeyPair();
-		$sig = Algorithm::sign('payload', $priv, 'rsa-pss-sha512');
-		$this->assertTrue(Algorithm::verify('payload', $sig, $jwk, 'rsa-pss-sha512'));
-		$this->assertTrue(Algorithm::verify('payload', $sig, $jwk, 'PS512'));
 	}
 
 	public function testEcdsaP256RoundTrip(): void {
@@ -94,14 +99,13 @@ class AlgorithmTest extends TestCase {
 	public function testAlgHintConflictsWithJwkKtyCrvRejected(): void {
 		// JWK has Ed25519 OKP shape but no `alg` member; explicit hint
 		// disagrees with what the key shape signals.
-		$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_ED25519]);
-		$details = openssl_pkey_get_details($key);
+		$keypair = sodium_crypto_sign_keypair();
 		$jwk = Jwk::fromArray([
 			'kty' => 'OKP',
 			'crv' => 'Ed25519',
 			'kid' => 'k',
 			// no `alg` advertised
-			'x' => self::b64url($details['ed25519']['pub_key']),
+			'x' => self::b64url(sodium_crypto_sign_publickey($keypair)),
 		]);
 		$this->expectException(SignatureException::class);
 		Algorithm::verify('payload', random_bytes(64), $jwk, 'ES256');
@@ -110,14 +114,13 @@ class AlgorithmTest extends TestCase {
 	public function testJwkAlgAndKtyCrvMustAgree(): void {
 		// JWK kty=OKP/crv=Ed25519 but advertises alg=ES256: contradictory,
 		// must be rejected even without an explicit hint.
-		$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_ED25519]);
-		$details = openssl_pkey_get_details($key);
+		$keypair = sodium_crypto_sign_keypair();
 		$jwk = Jwk::fromArray([
 			'kty' => 'OKP',
 			'crv' => 'Ed25519',
 			'kid' => 'k',
 			'alg' => 'ES256',
-			'x' => self::b64url($details['ed25519']['pub_key']),
+			'x' => self::b64url(sodium_crypto_sign_publickey($keypair)),
 		]);
 		$this->expectException(SignatureException::class);
 		Algorithm::verify('payload', random_bytes(64), $jwk, null);
@@ -153,18 +156,17 @@ class AlgorithmTest extends TestCase {
 	}
 
 	private function ed25519KeyPair(): array {
-		$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_ED25519]);
-		$priv = '';
-		openssl_pkey_export($key, $priv);
-		$details = openssl_pkey_get_details($key);
+		$keypair = sodium_crypto_sign_keypair();
+		$publicKey = sodium_crypto_sign_publickey($keypair);
+		$secretKey = sodium_crypto_sign_secretkey($keypair);
 		$jwk = Jwk::fromArray([
 			'kty' => 'OKP',
 			'crv' => 'Ed25519',
 			'kid' => 'k',
 			'alg' => 'EdDSA',
-			'x' => self::b64url($details['ed25519']['pub_key']),
+			'x' => self::b64url($publicKey),
 		]);
-		return [$priv, $jwk];
+		return [$secretKey, $jwk];
 	}
 
 	private function rsaKeyPair(): array {

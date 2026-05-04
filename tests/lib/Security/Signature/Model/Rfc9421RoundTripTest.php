@@ -165,20 +165,19 @@ class Rfc9421RoundTripTest extends TestCase {
 	}
 
 	private function ed25519Material(string $kid): array {
-		$key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_ED25519]);
-		$priv = '';
-		openssl_pkey_export($key, $priv);
-		$details = openssl_pkey_get_details($key);
+		$keypair = sodium_crypto_sign_keypair();
+		$publicKey = sodium_crypto_sign_publickey($keypair);
+		$secretKey = sodium_crypto_sign_secretkey($keypair);
 		$signatory = new Signatory(true);
 		$signatory->setKeyId($kid);
-		$signatory->setPublicKey($details['key']);
-		$signatory->setPrivateKey($priv);
+		$signatory->setPublicKey($publicKey);
+		$signatory->setPrivateKey($secretKey);
 		$jwk = Jwk::fromArray([
 			'kty' => 'OKP',
 			'crv' => 'Ed25519',
 			'kid' => $kid,
 			'alg' => 'EdDSA',
-			'x' => rtrim(strtr(base64_encode($details['ed25519']['pub_key']), '+/', '-_'), '='),
+			'x' => rtrim(strtr(base64_encode($publicKey), '+/', '-_'), '='),
 		]);
 		return [$signatory, $jwk];
 	}

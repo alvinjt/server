@@ -32,17 +32,12 @@ final class Jwk {
 	}
 
 	/**
-	 * Build a JWK from an Ed25519 public key in SPKI PEM form (as returned by
-	 * openssl_pkey_get_details for an OPENSSL_KEYTYPE_ED25519 key).
+	 * Build a JWK from a raw 32-byte Ed25519 public key, as produced by
+	 * {@see sodium_crypto_sign_publickey()}.
 	 */
-	public static function fromEd25519PublicKeyPem(string $pem, string $kid): self {
-		$key = openssl_pkey_get_public($pem);
-		if ($key === false) {
-			throw new InvalidArgumentException('not a valid public key PEM');
-		}
-		$details = openssl_pkey_get_details($key);
-		if ($details === false || ($details['type'] ?? null) !== OPENSSL_KEYTYPE_ED25519) {
-			throw new InvalidArgumentException('not an Ed25519 public key');
+	public static function fromEd25519PublicKey(string $rawPublicKey, string $kid): self {
+		if (strlen($rawPublicKey) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+			throw new InvalidArgumentException('Ed25519 public key must be ' . SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES . ' bytes');
 		}
 
 		return new self([
@@ -51,7 +46,7 @@ final class Jwk {
 			'kid' => $kid,
 			'alg' => 'EdDSA',
 			'use' => 'sig',
-			'x' => self::base64UrlEncode($details['ed25519']['pub_key']),
+			'x' => self::base64UrlEncode($rawPublicKey),
 		]);
 	}
 

@@ -129,9 +129,7 @@ class OCMSignatoryManager implements ISignatoryManager {
 		}
 
 		if (!$this->identityProofManager->hasAppKey('core', self::APPKEY_ED25519)) {
-			$this->identityProofManager->generateAppKey('core', self::APPKEY_ED25519, [
-				'private_key_type' => OPENSSL_KEYTYPE_ED25519,
-			]);
+			$this->identityProofManager->generateEd25519AppKey('core', self::APPKEY_ED25519);
 		}
 		$keyPair = $this->identityProofManager->getAppKey('core', self::APPKEY_ED25519);
 
@@ -153,7 +151,7 @@ class OCMSignatoryManager implements ISignatoryManager {
 		if ($signatory === null) {
 			return null;
 		}
-		return Jwk::fromEd25519PublicKeyPem($signatory->getPublicKey(), $signatory->getKeyId());
+		return Jwk::fromEd25519PublicKey($signatory->getPublicKey(), $signatory->getKeyId());
 	}
 
 	/**

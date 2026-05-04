@@ -2199,6 +2199,7 @@ class ComposerStaticInit749170dad3f5e7f9ca158f5a9f04f6a2
         'OC\\Security\\Signature\\Model\\SignedRequest' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Model/SignedRequest.php',
         'OC\\Security\\Signature\\Rfc9421\\Algorithm' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/Algorithm.php',
         'OC\\Security\\Signature\\Rfc9421\\ContentDigest' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/ContentDigest.php',
+        'OC\\Security\\Signature\\Rfc9421\\IJwkResolvingSignatoryManager' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/IJwkResolvingSignatoryManager.php',
         'OC\\Security\\Signature\\Rfc9421\\OcmProfile' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/OcmProfile.php',
         'OC\\Security\\Signature\\Rfc9421\\SfParser' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/SfParser.php',
         'OC\\Security\\Signature\\Rfc9421\\SignatureBase' => __DIR__ . '/../../..' . '/lib/private/Security/Signature/Rfc9421/SignatureBase.php',

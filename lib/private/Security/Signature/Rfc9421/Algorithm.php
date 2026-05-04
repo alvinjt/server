@@ -16,20 +16,25 @@ use OCP\Security\Signature\Exceptions\SignatureException;
 /**
  * RFC 9421 §3.3 signing/verification primitives.
  *
- * Supports the asymmetric algorithms registered natively in RFC 9421 §3.3.1
- * (RSASSA-PSS SHA-512), RFC 9421 §3.3.2 (RSASSA-PKCS1-v1_5 SHA-256),
- * RFC 9421 §3.3.4 (ECDSA P-256 SHA-256), RFC 9421 §3.3.5 (ECDSA P-384
- * SHA-384), and RFC 9421 §3.3.6 (Ed25519), plus the corresponding JOSE
- * algorithm names from RFC 7518 (JWA) and RFC 8037 (EdDSA) accepted under
- * RFC 9421 §3.3.7. Algorithm identifiers may arrive as an explicit `alg`
- * parameter on the signature or, when that parameter is omitted as
- * RFC 9421 §3.3.7 allows, be inferred from the resolved JWK's
- * `alg`/`kty`/`crv` members.
+ * Supports the asymmetric algorithms registered natively in RFC 9421 §3.3.2
+ * (RSASSA-PKCS1-v1_5 SHA-256), RFC 9421 §3.3.4 (ECDSA P-256 SHA-256),
+ * RFC 9421 §3.3.5 (ECDSA P-384 SHA-384), and RFC 9421 §3.3.6 (Ed25519), plus
+ * the corresponding JOSE algorithm names from RFC 7518 (JWA) and RFC 8037
+ * (EdDSA) accepted under RFC 9421 §3.3.7. Algorithm identifiers may arrive
+ * as an explicit `alg` parameter on the signature or, when that parameter
+ * is omitted as RFC 9421 §3.3.7 allows, be inferred from the resolved
+ * JWK's `alg`/`kty`/`crv` members.
+ *
+ * RFC 9421 §3.3.1 (RSASSA-PSS SHA-512) and the JOSE PS256/PS384/PS512
+ * aliases are intentionally not supported. The OpenSSL PSS padding mode
+ * (OPENSSL_PKCS1_PSS_PADDING) was only exposed by PHP in 8.5; supporting
+ * PSS would silently fail on the PHP 8.2 - PHP 8.4 versions we still
+ * support. RFC 9421 lets verifiers expose a subset of the registered
+ * algorithms and reject the rest, which we do.
  */
 final class Algorithm {
 	/** Asymmetric algorithm identifiers RFC 9421 §3.3 registers natively. */
 	public const NATIVE = [
-		'rsa-pss-sha512',
 		'rsa-v1_5-sha256',
 		'ecdsa-p256-sha256',
 		'ecdsa-p384-sha384',
@@ -37,22 +42,34 @@ final class Algorithm {
 	];
 
 	/**
-	 * Sign the signature base with the given algorithm and PEM private key.
-	 * Returns raw signature bytes (caller is responsible for any encoding).
+	 * Sign the signature base with the given algorithm.
+	 *
+	 * For Ed25519 the second argument is the raw 64-byte libsodium secret key
+	 * (as produced by sodium_crypto_sign_secretkey()). For every other
+	 * algorithm it is a PEM private key. Returns raw signature bytes; the
+	 * caller is responsible for any encoding.
 	 *
 	 * @throws SignatureException
 	 */
-	public static function sign(string $signatureBase, string $privateKeyPem, string $algorithm): string {
+	public static function sign(string $signatureBase, string $privateKey, string $algorithm): string {
 		$normalized = self::normalize($algorithm);
+
+		if ($normalized === 'ed25519') {
+			if (strlen($privateKey) !== SODIUM_CRYPTO_SIGN_SECRETKEYBYTES) {
+				throw new SignatureException('Ed25519 secret key must be ' . SODIUM_CRYPTO_SIGN_SECRETKEYBYTES . ' bytes');
+			}
+			return sodium_crypto_sign_detached($signatureBase, $privateKey);
+		}
+
 		[$opensslAlgo, $padding, $encoding] = self::opensslParametersForAlgorithm($normalized);
 
-		// Padding is only valid for RSA keys; passing it for Ed25519/ECDSA
-		// triggers a PHP warning and rejection.
+		// Padding is only valid for RSA keys; passing it for ECDSA triggers a
+		// PHP warning and rejection.
 		if ($padding === null) {
-			$ok = openssl_sign($signatureBase, $signature, $privateKeyPem, $opensslAlgo);
+			$ok = openssl_sign($signatureBase, $signature, $privateKey, $opensslAlgo);
 		} else {
 			/** @psalm-suppress TooManyArguments - the 5-arg form is supported on PHP 8 */
-			$ok = openssl_sign($signatureBase, $signature, $privateKeyPem, $opensslAlgo, $padding);
+			$ok = openssl_sign($signatureBase, $signature, $privateKey, $opensslAlgo, $padding);
 		}
 		if (!$ok) {
 			throw new SignatureException('openssl_sign failed for ' . $normalized);
@@ -82,6 +99,18 @@ final class Algorithm {
 	 */
 	public static function verify(string $signatureBase, string $signature, Jwk $jwk, ?string $algorithm): bool {
 		$resolved = self::resolveAlgorithm($jwk, $algorithm);
+
+		if ($resolved === 'ed25519') {
+			$rawPublicKey = self::ed25519RawPublicKeyFromJwk($jwk);
+			if ($rawPublicKey === null) {
+				throw new SignatureException('cannot derive Ed25519 public key from JWK');
+			}
+			if (strlen($signature) !== SODIUM_CRYPTO_SIGN_BYTES) {
+				return false;
+			}
+			return sodium_crypto_sign_verify_detached($signature, $signatureBase, $rawPublicKey);
+		}
+
 		[$opensslAlgo, $padding, $encoding] = self::opensslParametersForAlgorithm($resolved);
 
 		if ($encoding === 'ecdsa') {
@@ -104,6 +133,22 @@ final class Algorithm {
 	}
 
 	/**
+	 * Decode an Ed25519 JWK's `x` member to the raw 32-byte public key
+	 * libsodium expects. Returns null if the member is missing or malformed.
+	 */
+	private static function ed25519RawPublicKeyFromJwk(Jwk $jwk): ?string {
+		$x = $jwk->get('x');
+		if ($x === null || $x === '') {
+			return null;
+		}
+		$decoded = self::base64UrlDecode($x);
+		if ($decoded === null || strlen($decoded) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+			return null;
+		}
+		return $decoded;
+	}
+
+	/**
 	 * Normalize a JOSE algorithm name (RFC 7518, RFC 8037) to the equivalent
 	 * RFC 9421 native identifier. Returns the input unchanged if it is
 	 * already native.
@@ -117,7 +162,8 @@ final class Algorithm {
 		}
 
 		// JOSE algorithm identifiers (RFC 7518, RFC 8037) accepted per
-		// RFC 9421 §3.3.7.
+		// RFC 9421 §3.3.7. PS256/PS384/PS512 (RSA-PSS) intentionally omitted;
+		// see the class docblock.
 		return match ($algorithm) {
 			'EdDSA' => 'ed25519',
 			'ES256' => 'ecdsa-p256-sha256',
@@ -125,9 +171,6 @@ final class Algorithm {
 			'RS256' => 'rsa-v1_5-sha256',
 			'RS384' => 'rsa-v1_5-sha384',
 			'RS512' => 'rsa-v1_5-sha512',
-			'PS256' => 'rsa-pss-sha256',
-			'PS384' => 'rsa-pss-sha384',
-			'PS512' => 'rsa-pss-sha512',
 			default => throw new SignatureException('unsupported signature algorithm: ' . $algorithm),
 		};
 	}
@@ -136,18 +179,13 @@ final class Algorithm {
 	 * @return array{0: int, 1: int|null, 2: string} [openssl algo, padding (null = omit for non-RSA), wire encoding]
 	 */
 	private static function opensslParametersForAlgorithm(string $native): array {
+		// Ed25519 is handled by libsodium upstream of this method and never
+		// reaches it; only RSA-PKCS1-v1_5 and ECDSA go through OpenSSL.
+		// RSA-PSS is not supported (see class docblock).
 		return match ($native) {
-			// Ed25519 has its own internal hashing, so we pass 0 to suppress
-			// the digest selection in openssl_*; OPENSSL_ALGO_SHA256 etc. are
-			// rejected with "invalid digest" by the OpenSSL provider. Padding
-			// must be omitted for non-RSA keys or PHP rejects it.
-			'ed25519' => [0, null, 'raw'],
 			'rsa-v1_5-sha256' => [OPENSSL_ALGO_SHA256, OPENSSL_PKCS1_PADDING, 'raw'],
 			'rsa-v1_5-sha384' => [OPENSSL_ALGO_SHA384, OPENSSL_PKCS1_PADDING, 'raw'],
 			'rsa-v1_5-sha512' => [OPENSSL_ALGO_SHA512, OPENSSL_PKCS1_PADDING, 'raw'],
-			'rsa-pss-sha256' => [OPENSSL_ALGO_SHA256, OPENSSL_PKCS1_PSS_PADDING, 'raw'],
-			'rsa-pss-sha384' => [OPENSSL_ALGO_SHA384, OPENSSL_PKCS1_PSS_PADDING, 'raw'],
-			'rsa-pss-sha512' => [OPENSSL_ALGO_SHA512, OPENSSL_PKCS1_PSS_PADDING, 'raw'],
 			'ecdsa-p256-sha256' => [OPENSSL_ALGO_SHA256, null, 'ecdsa'],
 			'ecdsa-p384-sha384' => [OPENSSL_ALGO_SHA384, null, 'ecdsa'],
 			default => throw new SignatureException('unsupported signature algorithm: ' . $native),
@@ -359,25 +397,15 @@ final class Algorithm {
 
 	/**
 	 * Materialise the JWK as a PEM SPKI string suitable for openssl_verify.
-	 * Returns null if conversion is not possible.
+	 * Returns null if conversion is not possible. Ed25519 keys are not
+	 * handled here — they take the libsodium path in {@see verify}.
 	 */
 	private static function publicKeyForVerify(Jwk $jwk, string $algorithm): ?string {
 		return match ($jwk->getKty()) {
-			'OKP' => self::ed25519JwkToPem($jwk),
 			'EC' => self::ecJwkToPem($jwk),
 			'RSA' => self::rsaJwkToPem($jwk),
 			default => null,
 		};
-	}
-
-	private static function ed25519JwkToPem(Jwk $jwk): ?string {
-		$x = self::base64UrlDecode($jwk->get('x') ?? '');
-		if ($x === null || strlen($x) !== 32) {
-			return null;
-		}
-		// SPKI for Ed25519: AlgorithmIdentifier (OID 1.3.101.112) + bit string.
-		$spki = "\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00" . $x;
-		return self::pemFromDer($spki, 'PUBLIC KEY');
 	}
 
 	private static function ecJwkToPem(Jwk $jwk): ?string {

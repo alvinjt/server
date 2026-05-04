@@ -14,26 +14,19 @@ use OC\Security\Jwks\Jwk;
 use Test\TestCase;
 
 class JwkTest extends TestCase {
-	private string $ed25519PublicPem;
-	private string $rsaPublicPem;
+	private string $ed25519PublicKey;
 
 	#[\Override]
 	protected function setUp(): void {
 		parent::setUp();
 
-		$ed = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_ED25519]);
-		$this->ed25519PublicPem = openssl_pkey_get_details($ed)['key'];
-
-		$rsa = openssl_pkey_new([
-			'private_key_type' => OPENSSL_KEYTYPE_RSA,
-			'private_key_bits' => 2048,
-		]);
-		$this->rsaPublicPem = openssl_pkey_get_details($rsa)['key'];
+		$keypair = sodium_crypto_sign_keypair();
+		$this->ed25519PublicKey = sodium_crypto_sign_publickey($keypair);
 	}
 
-	public function testFromEd25519PublicKeyPem(): void {
-		$kid = 'https://example.org/ocm#ed25519';
-		$jwk = Jwk::fromEd25519PublicKeyPem($this->ed25519PublicPem, $kid);
+	public function testFromEd25519PublicKey(): void {
+		$kid = 'https://sender.example.org/ocm#ed25519';
+		$jwk = Jwk::fromEd25519PublicKey($this->ed25519PublicKey, $kid);
 
 		$arr = $jwk->toArray();
 		$this->assertSame('OKP', $arr['kty']);
@@ -48,14 +41,14 @@ class JwkTest extends TestCase {
 		$this->assertMatchesRegularExpression('#^[A-Za-z0-9_-]+$#', $arr['x']);
 	}
 
-	public function testFromEd25519RejectsRsaKey(): void {
+	public function testFromEd25519RejectsWrongLength(): void {
 		$this->expectException(InvalidArgumentException::class);
-		Jwk::fromEd25519PublicKeyPem($this->rsaPublicPem, 'kid');
+		Jwk::fromEd25519PublicKey(str_repeat("\0", 31), 'kid');
 	}
 
-	public function testFromEd25519RejectsGarbage(): void {
+	public function testFromEd25519RejectsEmpty(): void {
 		$this->expectException(InvalidArgumentException::class);
-		Jwk::fromEd25519PublicKeyPem('not a pem', 'kid');
+		Jwk::fromEd25519PublicKey('', 'kid');
 	}
 
 	public function testFromArrayPreservesData(): void {

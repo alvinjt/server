@@ -2158,6 +2158,7 @@ return array(
     'OC\\Security\\Signature\\Model\\SignedRequest' => $baseDir . '/lib/private/Security/Signature/Model/SignedRequest.php',
     'OC\\Security\\Signature\\Rfc9421\\Algorithm' => $baseDir . '/lib/private/Security/Signature/Rfc9421/Algorithm.php',
     'OC\\Security\\Signature\\Rfc9421\\ContentDigest' => $baseDir . '/lib/private/Security/Signature/Rfc9421/ContentDigest.php',
+    'OC\\Security\\Signature\\Rfc9421\\IJwkResolvingSignatoryManager' => $baseDir . '/lib/private/Security/Signature/Rfc9421/IJwkResolvingSignatoryManager.php',
     'OC\\Security\\Signature\\Rfc9421\\OcmProfile' => $baseDir . '/lib/private/Security/Signature/Rfc9421/OcmProfile.php',
     'OC\\Security\\Signature\\Rfc9421\\SfParser' => $baseDir . '/lib/private/Security/Signature/Rfc9421/SfParser.php',
     'OC\\Security\\Signature\\Rfc9421\\SignatureBase' => $baseDir . '/lib/private/Security/Signature/Rfc9421/SignatureBase.php',
