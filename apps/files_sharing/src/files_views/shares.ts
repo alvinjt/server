@@ -14,6 +14,7 @@ import { getNavigation, View } from '@nextcloud/files'
 import { loadState } from '@nextcloud/initial-state'
 import { t } from '@nextcloud/l10n'
 import { ShareType } from '@nextcloud/sharing'
+import { restrictViewActions } from '../../../files/src/services/ViewActionsRegistry.ts'
 import { getContents, isFileRequest } from '../services/SharingService.ts'
 
 export const sharesViewId = 'shareoverview'
@@ -137,6 +138,11 @@ export default () => {
 		getContents: () => getContents(false, false, false, true),
 	}))
 
+	// Deleted shares are unmounted: only "restore" can succeed.
+	// Generic file actions would call DAV against an unreachable path
+	// and surface a misleading "file is not available" error.
+	restrictViewActions(deletedSharesViewId, ['restore-share'])
+
 	Navigation.register(new View({
 		id: pendingSharesViewId,
 		name: t('files_sharing', 'Pending shares'),
@@ -153,4 +159,7 @@ export default () => {
 
 		getContents: () => getContents(false, false, true, false),
 	}))
+
+	// Pending shares are not yet mounted: only "accept" / "reject" can succeed.
+	restrictViewActions(pendingSharesViewId, ['accept-share', 'reject-share'])
 }

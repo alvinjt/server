@@ -93,6 +93,7 @@ import { useActionsMenuStore } from '../store/actionsmenu.ts'
 import { useActiveStore } from '../store/active.ts'
 import { useFilesStore } from '../store/files.ts'
 import { useSelectionStore } from '../store/selection.ts'
+import { isActionAllowedInView } from '../services/ViewActionsRegistry.ts'
 import { logger } from '../utils/logger.ts'
 
 export const FILE_LIST_HEAD_FIRST_BATCH_ACTION_ID = 'files-list-head-first-batch-action'
@@ -167,6 +168,8 @@ export default defineComponent({
 	computed: {
 		enabledFileActions(): IFileAction[] {
 			return this.actions
+				// Actions can be restricted per-view (e.g. pending shares only allow accept/reject)
+				.filter((action) => isActionAllowedInView(this.currentView?.id, action.id))
 				// We don't handle renderInline actions in this component
 				.filter((action) => !action.renderInline)
 				// We don't handle actions that are not visible

@@ -8,6 +8,7 @@ import { showError, showSuccess } from '@nextcloud/dialogs'
 import { NodeStatus } from '@nextcloud/files'
 import { t } from '@nextcloud/l10n'
 import Vue from 'vue'
+import { isActionAllowedInView } from '../services/ViewActionsRegistry.ts'
 import { useActiveStore } from '../store/active.ts'
 import { logger } from '../utils/logger.ts'
 
@@ -40,6 +41,11 @@ export async function executeAction(action: IFileAction) {
 		folder: currentFolder,
 		contents,
 	} as ActionContextSingle
+
+	if (!isActionAllowedInView(currentView.id, action.id)) {
+		logger.debug('Action is not allowed in the current view', { action, view: currentView })
+		return
+	}
 
 	if (!action.enabled!(context)) {
 		logger.debug('Action is not not available for the current context', { action, node: currentNode, view: currentView })

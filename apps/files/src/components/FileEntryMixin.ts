@@ -18,6 +18,7 @@ import { extname, relative } from 'path'
 import Vue, { computed, defineComponent } from 'vue'
 import { action as sidebarAction } from '../actions/sidebarAction.ts'
 import { onDropInternalFiles } from '../services/DropService.ts'
+import { isActionAllowedInView } from '../services/ViewActionsRegistry.ts'
 import { getDragAndDropPreview } from '../utils/dragUtils.ts'
 import { hashCode } from '../utils/hashUtils.ts'
 import { logger } from '../utils/logger.ts'
@@ -233,6 +234,7 @@ export default defineComponent({
 			}
 
 			return this.actions
+				.filter((action: IFileAction) => isActionAllowedInView(this.activeView?.id, action.id))
 				.filter((action: IFileAction) => {
 					if (!action.enabled) {
 						return true
