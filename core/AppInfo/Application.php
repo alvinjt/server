@@ -5,6 +5,7 @@
  * SPDX-FileCopyrightText: 2016 ownCloud, Inc.
  * SPDX-License-Identifier: AGPL-3.0-only
  */
+
 namespace OC\Core\AppInfo;
 
 use OC\Authentication\Events\RemoteWipeFinished;
@@ -22,8 +23,20 @@ use OC\Core\Listener\AddMissingPrimaryKeyListener;
 use OC\Core\Listener\BeforeTemplateRenderedListener;
 use OC\Core\Listener\PasswordUpdatedListener;
 use OC\Core\Notification\CoreNotifier;
+use OC\Core\Sharing\Permission\CreateSharePermissionCategory;
+use OC\Core\Sharing\Permission\DeleteSharePermissionCategory;
+use OC\Core\Sharing\Permission\ReadSharePermissionCategory;
+use OC\Core\Sharing\Permission\UpdateSharePermissionCategory;
+use OC\Core\Sharing\Property\ExpirationDateShareProperty;
+use OC\Core\Sharing\Property\LabelShareProperty;
+use OC\Core\Sharing\Property\NoteShareProperty;
+use OC\Core\Sharing\Property\PasswordShareProperty;
+use OC\Core\Sharing\Recipient\GroupShareRecipientType;
+use OC\Core\Sharing\Recipient\TokenShareRecipientType;
+use OC\Core\Sharing\Recipient\UserShareRecipientType;
 use OC\OCM\OCMDiscoveryHandler;
 use OC\TagManager;
+use OCA\Files\Sharing\Source\NodeShareSourceType;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -32,6 +45,8 @@ use OCP\AppFramework\Http\Events\BeforeLoginTemplateRenderedEvent;
 use OCP\AppFramework\Http\Events\BeforeTemplateRenderedEvent;
 use OCP\DB\Events\AddMissingIndicesEvent;
 use OCP\DB\Events\AddMissingPrimaryKeyEvent;
+use OCP\Server;
+use OCP\Sharing\IRegistry;
 use OCP\User\Events\BeforeUserDeletedEvent;
 use OCP\User\Events\PasswordUpdatedEvent;
 use OCP\User\Events\UserDeletedEvent;
@@ -89,6 +104,39 @@ class Application extends App implements IBootstrap {
 
 		$context->registerWellKnownHandler(OCMDiscoveryHandler::class);
 		$context->registerCapability(Capabilities::class);
+
+		$registry = Server::get(IRegistry::class);
+
+		$registry->registerRecipientType(new GroupShareRecipientType());
+		$registry->registerRecipientType(new UserShareRecipientType());
+		$registry->registerRecipientType(new TokenShareRecipientType());
+
+		$registry->registerProperty(new ExpirationDateShareProperty());
+		$registry->registerPropertyCompatibleWithSourceType(ExpirationDateShareProperty::class, NodeShareSourceType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(ExpirationDateShareProperty::class, UserShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(ExpirationDateShareProperty::class, GroupShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(ExpirationDateShareProperty::class, TokenShareRecipientType::class);
+
+		$registry->registerProperty(new LabelShareProperty());
+		$registry->registerPropertyCompatibleWithSourceType(LabelShareProperty::class, NodeShareSourceType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(LabelShareProperty::class, UserShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(LabelShareProperty::class, GroupShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(LabelShareProperty::class, TokenShareRecipientType::class);
+
+		$registry->registerProperty(new NoteShareProperty());
+		$registry->registerPropertyCompatibleWithSourceType(NoteShareProperty::class, NodeShareSourceType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(NoteShareProperty::class, UserShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(NoteShareProperty::class, GroupShareRecipientType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(NoteShareProperty::class, TokenShareRecipientType::class);
+
+		$registry->registerProperty(new PasswordShareProperty());
+		$registry->registerPropertyCompatibleWithSourceType(PasswordShareProperty::class, NodeShareSourceType::class);
+		$registry->registerPropertyCompatibleWithRecipientType(PasswordShareProperty::class, TokenShareRecipientType::class);
+
+		$registry->registerPermissionCategory(new CreateSharePermissionCategory());
+		$registry->registerPermissionCategory(new ReadSharePermissionCategory());
+		$registry->registerPermissionCategory(new UpdateSharePermissionCategory());
+		$registry->registerPermissionCategory(new DeleteSharePermissionCategory());
 	}
 
 	#[\Override]
