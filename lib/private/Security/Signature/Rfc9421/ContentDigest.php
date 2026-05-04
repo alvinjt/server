@@ -32,24 +32,32 @@ final class ContentDigest {
 	}
 
 	/**
-	 * Validate the header against the body. Returns true if at least one
-	 * algorithm in the header is recognised AND its digest matches the body.
+	 * Validate the header against the body. Returns true when:
+	 *   - at least one digest algorithm in the header is recognised, AND
+	 *   - every recognised algorithm's digest matches the body.
 	 *
-	 * Unknown algorithms are skipped per RFC 9530 §2; if no recognised entry
-	 * matches, verification fails.
+	 * Unsupported algorithms are skipped per RFC 9530 §2. We deliberately
+	 * fail closed when any recognised algorithm mismatches: a mixed header
+	 * like `sha-256=:correct:, sha-512=:wrong:` is treated as an attack on
+	 * one algorithm rather than a successful match on the other. RFC 9530
+	 * makes a single match sufficient, but for OCM we require the stronger
+	 * property because the cost of false-accept is share/notification
+	 * forgery.
 	 */
 	public static function verify(string $header, string $body): bool {
+		$matched = false;
 		foreach (self::parse($header) as $algorithm => $digest) {
 			try {
 				$hashAlgorithm = self::hashAlgorithmFor($algorithm);
 			} catch (InvalidArgumentException) {
 				continue;
 			}
-			if (hash_equals(hash($hashAlgorithm, $body, true), $digest)) {
-				return true;
+			if (!hash_equals(hash($hashAlgorithm, $body, true), $digest)) {
+				return false;
 			}
+			$matched = true;
 		}
-		return false;
+		return $matched;
 	}
 
 	/**

@@ -42,12 +42,11 @@ class OCMJwksHandler implements IHandler {
 		$keys = [];
 		if (!$this->appConfig->getValueBool('core', OCMSignatoryManager::APPCONFIG_SIGN_DISABLED, lazy: true)) {
 			try {
-				$jwk = $this->signatoryManager->getLocalEd25519Jwk();
-				if ($jwk !== null) {
+				foreach ($this->signatoryManager->getLocalEd25519Jwks() as $jwk) {
 					$keys[] = $jwk->toArray();
 				}
 			} catch (Throwable $e) {
-				$this->logger->warning('failed to build local Ed25519 JWK', ['exception' => $e]);
+				$this->logger->warning('failed to build local Ed25519 JWKs', ['exception' => $e]);
 			}
 		}
 

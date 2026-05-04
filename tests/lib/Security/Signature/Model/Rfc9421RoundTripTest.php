@@ -164,6 +164,92 @@ class Rfc9421RoundTripTest extends TestCase {
 		new Rfc9421IncomingSignedRequest($body, $req, ['ttl' => 300]);
 	}
 
+	public function testFutureCreatedRejected(): void {
+		[$signatory] = $this->ed25519Material('https://sender.example.org/ocm#ed25519');
+		$signatoryManager = $this->makeSignatoryManager($signatory);
+
+		$body = 'msg';
+		$out = new Rfc9421OutgoingSignedRequest($body, $signatoryManager, 'receiver.example.org', 'POST', 'https://receiver.example.org/ocm/shares');
+		$out->sign();
+
+		// Push `created` 10 minutes into the future — well past the
+		// 60-second skew tolerance.
+		$headers = $out->getHeaders();
+		$futureCreated = time() + 600;
+		$headers['Signature-Input'] = preg_replace('/created=\d+/', 'created=' . $futureCreated, (string)$headers['Signature-Input']);
+
+		$req = $this->mockRequest($headers, 'POST', '/ocm/shares', 'receiver.example.org');
+		$this->expectException(IncomingRequestException::class);
+		new Rfc9421IncomingSignedRequest($body, $req);
+	}
+
+	public function testMissingCreatedRejected(): void {
+		[$signatory] = $this->ed25519Material('https://sender.example.org/ocm#ed25519');
+		$signatoryManager = $this->makeSignatoryManager($signatory);
+
+		$body = 'msg';
+		$out = new Rfc9421OutgoingSignedRequest($body, $signatoryManager, 'receiver.example.org', 'POST', 'https://receiver.example.org/ocm/shares');
+		$out->sign();
+
+		// Strip the `;created=...` parameter so the signature loses its
+		// freshness anchor.
+		$headers = $out->getHeaders();
+		$headers['Signature-Input'] = preg_replace('/;created=\d+/', '', (string)$headers['Signature-Input']);
+
+		$req = $this->mockRequest($headers, 'POST', '/ocm/shares', 'receiver.example.org');
+		$this->expectException(IncomingRequestException::class);
+		new Rfc9421IncomingSignedRequest($body, $req);
+	}
+
+	public function testSignatureNotCoveringRequiredComponentsRejected(): void {
+		// A peer that signs only `@method` and `@target-uri` — the body and
+		// freshness window aren't bound. Even with a valid signature we
+		// must refuse it.
+		[$signatory] = $this->ed25519Material('https://sender.example.org/ocm#ed25519');
+		$signatoryManager = $this->makeSignatoryManagerWithComponents(
+			$signatory,
+			['@method', '@target-uri'],
+		);
+
+		$body = 'msg';
+		$out = new Rfc9421OutgoingSignedRequest($body, $signatoryManager, 'receiver.example.org', 'POST', 'https://receiver.example.org/ocm/shares');
+		$out->sign();
+		$req = $this->mockRequest($out->getHeaders(), 'POST', '/ocm/shares', 'receiver.example.org');
+
+		$this->expectException(IncomingRequestException::class);
+		new Rfc9421IncomingSignedRequest($body, $req);
+	}
+
+	private function makeSignatoryManagerWithComponents(Signatory $signatory, array $components): ISignatoryManager {
+		return new class($signatory, $components) implements ISignatoryManager {
+			public function __construct(
+				private Signatory $sig,
+				private array $components,
+			) {
+			}
+
+			public function getProviderId(): string {
+				return 'test';
+			}
+
+			public function getOptions(): array {
+				return [
+					'algorithm' => SignatureAlgorithm::RSA_SHA256,
+					'digestAlgorithm' => DigestAlgorithm::SHA256,
+					'rfc9421.coveredComponents' => $this->components,
+				];
+			}
+
+			public function getLocalSignatory(): Signatory {
+				return $this->sig;
+			}
+
+			public function getRemoteSignatory(string $remote): ?Signatory {
+				return null;
+			}
+		};
+	}
+
 	private function ed25519Material(string $kid): array {
 		$keypair = sodium_crypto_sign_keypair();
 		$publicKey = sodium_crypto_sign_publickey($keypair);

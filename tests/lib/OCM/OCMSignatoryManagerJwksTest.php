@@ -15,6 +15,7 @@ use OCP\Http\Client\IClient;
 use OCP\Http\Client\IClientService;
 use OCP\Http\Client\IResponse;
 use OCP\IAppConfig;
+use OCP\ICacheFactory;
 use OCP\IConfig;
 use OCP\IURLGenerator;
 use OCP\Security\Signature\ISignatureManager;
@@ -48,6 +49,11 @@ class OCMSignatoryManagerJwksTest extends TestCase {
 
 		$this->clientService->method('newClient')->willReturn($this->client);
 
+		// Use a cache factory that hands out a fresh in-process ArrayCache
+		// per test so cached JWKS doesn't leak across cases.
+		$cacheFactory = $this->createMock(ICacheFactory::class);
+		$cacheFactory->method('createDistributed')->willReturn(new \OC\Memcache\ArrayCache(''));
+
 		$this->signatoryManager = new OCMSignatoryManager(
 			$this->appConfig,
 			$this->signatureManager,
@@ -55,6 +61,7 @@ class OCMSignatoryManagerJwksTest extends TestCase {
 			$this->identityProofManager,
 			$this->clientService,
 			$this->config,
+			$cacheFactory,
 			$this->logger,
 		);
 	}
@@ -125,6 +132,36 @@ class OCMSignatoryManagerJwksTest extends TestCase {
 			->willReturn($this->jsonResponse(['keys' => []]));
 
 		$this->signatoryManager->getRemoteJwk('sender.example.org', 'kid');
+	}
+
+	public function testJwksCachedAcrossCallsToTheSameOrigin(): void {
+		$kid = 'sender.example.org#key1';
+		$jwks = ['keys' => [['kty' => 'OKP', 'crv' => 'Ed25519', 'kid' => $kid, 'x' => 'AAAA']]];
+		// Two consecutive lookups at the same origin must hit the network
+		// only once thanks to the JWKS cache.
+		$this->client->expects($this->once())
+			->method('get')
+			->willReturn($this->jsonResponse($jwks));
+
+		$this->assertNotNull($this->signatoryManager->getRemoteJwk('sender.example.org', $kid));
+		$this->assertNotNull($this->signatoryManager->getRemoteJwk('sender.example.org', $kid));
+	}
+
+	public function testCacheMissOnNewKidTriggersRefetchOnce(): void {
+		$first = ['keys' => [['kty' => 'OKP', 'crv' => 'Ed25519', 'kid' => 'old', 'x' => 'AAAA']]];
+		$second = ['keys' => [['kty' => 'OKP', 'crv' => 'Ed25519', 'kid' => 'new', 'x' => 'BBBB']]];
+		// First call populates the cache with the old doc; the second call
+		// asks for an unknown kid which triggers exactly one refetch and
+		// then succeeds.
+		$this->client->expects($this->exactly(2))
+			->method('get')
+			->willReturnOnConsecutiveCalls(
+				$this->jsonResponse($first),
+				$this->jsonResponse($second),
+			);
+
+		$this->assertNotNull($this->signatoryManager->getRemoteJwk('sender.example.org', 'old'));
+		$this->assertNotNull($this->signatoryManager->getRemoteJwk('sender.example.org', 'new'));
 	}
 
 	private function respondWith(array $body): void {

@@ -51,6 +51,27 @@ use OCP\Security\Signature\Model\Signatory;
 class Rfc9421IncomingSignedRequest extends SignedRequest implements
 	IIncomingSignedRequest,
 	JsonSerializable {
+	/**
+	 * Components a signature MUST cover to be considered authentic for OCM.
+	 * Missing any of these means the signer left a body or freshness window
+	 * unprotected. Callers can override via the `rfc9421.requiredComponents`
+	 * option — but tightening below this baseline is on them.
+	 */
+	private const DEFAULT_REQUIRED_COMPONENTS = [
+		'@method',
+		'@target-uri',
+		'content-digest',
+		'content-length',
+		'date',
+	];
+
+	/**
+	 * How far in the future a `created` timestamp may be before we treat
+	 * the signature as forged or clock-skewed beyond plausibility. Callers
+	 * may override via the `rfc9421.maxClockSkew` option.
+	 */
+	private const DEFAULT_MAX_FUTURE_SKEW = 60;
+
 	private string $origin = '';
 	/** @var list<string> */
 	private array $components;
@@ -107,6 +128,7 @@ class Rfc9421IncomingSignedRequest extends SignedRequest implements
 		$this->signatureParams = $entry['params'];
 		$this->rawSignature = $signatures[OcmProfile::SIGNATURE_LABEL];
 
+		$this->verifyRequiredComponents();
 		$this->verifyTimestamps();
 		$this->verifyContentDigestIfCovered($body);
 		$this->verifyContentLengthIfCovered($body);
@@ -223,18 +245,48 @@ class Rfc9421IncomingSignedRequest extends SignedRequest implements
 	}
 
 	/**
+	 * Refuse signatures that don't cover the components OCM relies on for
+	 * authenticity (request identity, body integrity, freshness). Without
+	 * this check the sender could omit `content-digest` or `content-length`
+	 * and leave the body unprotected even though the signature verifies.
+	 *
+	 * @throws IncomingRequestException
+	 */
+	private function verifyRequiredComponents(): void {
+		/** @var list<string> $required */
+		$required = $this->options['rfc9421.requiredComponents'] ?? self::DEFAULT_REQUIRED_COMPONENTS;
+		$missing = array_values(array_diff($required, $this->components));
+		if ($missing !== []) {
+			throw new IncomingRequestException(
+				'signature does not cover required components: ' . implode(', ', $missing)
+			);
+		}
+	}
+
+	/**
+	 * Reject stale or future-dated signatures. The `created` parameter is
+	 * required: without it there is no anchor to bound the replay window.
+	 * `created` may sit at most `maxClockSkew` seconds in the future (clock
+	 * drift tolerance) and at most `ttl` seconds in the past.
+	 *
 	 * @throws IncomingRequestException
 	 */
 	private function verifyTimestamps(): void {
 		$ttl = (int)($this->options['ttl'] ?? SignatureManager::DATE_TTL);
+		$skew = (int)($this->options['rfc9421.maxClockSkew'] ?? self::DEFAULT_MAX_FUTURE_SKEW);
 		$now = time();
 
-		if (isset($this->signatureParams['created'])) {
-			$created = (int)$this->signatureParams['created'];
-			if ($ttl > 0 && $created < $now - $ttl) {
-				throw new IncomingRequestException('signature is too old');
-			}
+		if (!isset($this->signatureParams['created'])) {
+			throw new IncomingRequestException('signature missing required `created` parameter');
 		}
+		$created = (int)$this->signatureParams['created'];
+		if ($created > $now + $skew) {
+			throw new IncomingRequestException('signature `created` is too far in the future');
+		}
+		if ($ttl > 0 && $created < $now - $ttl) {
+			throw new IncomingRequestException('signature is too old');
+		}
+
 		if (isset($this->signatureParams['expires'])) {
 			$expires = (int)$this->signatureParams['expires'];
 			if ($expires < $now) {

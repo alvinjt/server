@@ -40,6 +40,18 @@ class ContentDigestTest extends TestCase {
 		$this->assertTrue(ContentDigest::verify($header, $body));
 	}
 
+	public function testFailsIfAnyRecognisedAlgorithmMismatches(): void {
+		// All recognised digests must agree. A correct sha-256 alongside a
+		// wrong sha-512 is treated as an attack on the weaker algorithm,
+		// not as a successful match on the stronger one.
+		$body = 'data';
+		$sha256 = ContentDigest::compute($body, ContentDigest::ALGO_SHA256);
+		$wrongSha512 = 'sha-512=:' . base64_encode(hash('sha512', 'tampered', true)) . ':';
+		$this->assertFalse(ContentDigest::verify($sha256 . ', ' . $wrongSha512, $body));
+		// And the inverse ordering.
+		$this->assertFalse(ContentDigest::verify($wrongSha512 . ', ' . $sha256, $body));
+	}
+
 	public function testUnknownAlgorithmIsIgnored(): void {
 		$body = 'data';
 		$sha256 = ContentDigest::compute($body, ContentDigest::ALGO_SHA256);
