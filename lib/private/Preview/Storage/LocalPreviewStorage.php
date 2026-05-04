@@ -310,11 +310,12 @@ class LocalPreviewStorage implements IPreviewStorage {
 		}
 
 		$result = [];
+		$qb = $this->connection->getTypedQueryBuilder();
+		$qb->selectColumns('fileid', 'storage', 'etag', 'mimetype')
+			->from('filecache')
+			->where($qb->expr()->in('fileid', $qb->createParameter('fileIds')));
 		foreach (array_chunk($fileIds, 1000) as $chunk) {
-			$qb = $this->connection->getTypedQueryBuilder();
-			$qb->selectColumns('fileid', 'storage', 'etag', 'mimetype')
-				->from('filecache')
-				->where($qb->expr()->in('fileid', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)));
+			$qb->setParameter('fileIds', $chunk, IQueryBuilder::PARAM_INT_ARRAY);
 			$rows = $qb->runAcrossAllShards()
 				->executeQuery();
 			while ($row = $rows->fetchAssociative()) {
@@ -336,11 +337,12 @@ class LocalPreviewStorage implements IPreviewStorage {
 		}
 
 		$result = [];
+		$qb = $this->connection->getTypedQueryBuilder();
+		$qb->selectColumns('fileid', 'storage', 'etag', 'mimetype', 'parent', 'path_hash')
+			->from('filecache')
+			->where($qb->expr()->in('path_hash', $qb->createParameter('pathHashes')));
 		foreach (array_chunk($pathHashes, 1000) as $chunk) {
-			$qb = $this->connection->getTypedQueryBuilder();
-			$qb->selectColumns('fileid', 'storage', 'etag', 'mimetype', 'parent', 'path_hash')
-				->from('filecache')
-				->where($qb->expr()->in('path_hash', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_STR_ARRAY)));
+			$qb->setParameter('pathHashes', $chunk, IQueryBuilder::PARAM_STR_ARRAY);
 			$rows = $qb->runAcrossAllShards()
 				->executeQuery();
 			while ($row = $rows->fetchAssociative()) {
